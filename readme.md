@@ -130,4 +130,14 @@ push_retries = 3
 push_backoff = 1
 ```
 
+Example `APRS` configuration with push enabled minimal configuration:
+```
+[APRS]
+output_filename = /dev/shm/aprs.pkt
+station_model = mystation
+include_position = 1
+push_enabled = 1
+push_url = https://example.test/push
+```
+
 Default behavior: when `push_enabled` is omitted or set to `0` the formatter will only write the APRS packet to the configured `output_filename` and will not attempt any network activity. When `push_enabled` is `1` the `push_url` must be set.
