@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import time
 import os
 import requests
 
@@ -267,22 +268,46 @@ class APRS(weewx.engine.StdService):
 
         # Prepare authentication payload
         auth = (username, password) if username and password else None
-        
-        # Requests will automatically handle http vs https and the port
+
+        # Retry parameters (configurable)
         try:
-            response = requests.post(
-                url,
-                data=packet_content,
-                auth=auth,
-                verify=verify_ssl,
-                timeout=10,  # Set a timeout for the request
-            )
-            response.raise_for_status()  # Raise exception for bad status codes (4xx or 5xx)
+            retries = int(self.config.get('APRS', 'push_retries', 3))
+        except Exception:
+            retries = 3
+        try:
+            backoff = float(self.config.get('APRS', 'push_backoff', 0))
+        except Exception:
+            backoff = 0
 
-            logging.info("APRS packet successfully pushed. Status: %s", response.status_code)
-
-        except requests.exceptions.RequestException as e:
-            logging.error("Failed to push APRS packet to %s: %s", url, e)
+        session = requests.Session()
+        try:
+            for attempt in range(1, retries + 1):
+                try:
+                    response = session.post(
+                        url,
+                        data=packet_content,
+                        auth=auth,
+                        verify=verify_ssl,
+                        timeout=10,
+                    )
+                    response.raise_for_status()
+                    logging.info("APRS packet successfully pushed. Status: %s", response.status_code)
+                    break
+                except requests.exceptions.RequestException as e:
+                    logging.warning("Attempt %d/%d: failed to push APRS packet to %s: %s", attempt, retries, url, e)
+                    if attempt == retries:
+                        logging.error("All attempts to push APRS packet failed")
+                    else:
+                        # exponential backoff
+                        sleep_for = backoff * (2 ** (attempt - 1))
+                        if sleep_for:
+                            time.sleep(sleep_for)
+                        continue
+        finally:
+            try:
+                session.close()
+            except Exception:
+                pass
 
 
     def do_format(self, packet, time_ts):

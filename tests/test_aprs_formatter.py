@@ -38,8 +38,8 @@ def test_handle_new_archive_record_basic(fake_engine, basic_config, tmp_path, mo
 
     ev = DummyEvent(record)
 
-    # Ensure push_packet doesn't actually try network: patch requests.post
-    monkeypatch.setattr(aprs_formatter.requests, 'post', lambda *a, **k: types.SimpleNamespace(status_code=200, raise_for_status=lambda: None))
+    # Ensure push_packet doesn't actually try network: patch requests.Session.post
+    monkeypatch.setattr(aprs_formatter.requests.Session, 'post', lambda self, *a, **k: types.SimpleNamespace(status_code=200, raise_for_status=lambda: None))
 
     # Call handler
     service._handle_new_archive_record(ev)
@@ -63,8 +63,8 @@ def test_accurite_branch(fake_engine, basic_config, tmp_path, monkeypatch):
     }
     ev = DummyEvent(record)
 
-    # Patch requests.post to avoid network
-    monkeypatch.setattr(aprs_formatter.requests, 'post', lambda *a, **k: types.SimpleNamespace(status_code=200, raise_for_status=lambda: None))
+    # Patch requests.Session.post to avoid network
+    monkeypatch.setattr(aprs_formatter.requests.Session, 'post', lambda self, *a, **k: types.SimpleNamespace(status_code=200, raise_for_status=lambda: None))
 
     service._handle_new_archive_record(ev)
 
@@ -88,7 +88,8 @@ def test_push_packet_calls_requests(fake_engine, basic_config, tmp_path, monkeyp
         called['data'] = data
         return types.SimpleNamespace(status_code=201, raise_for_status=lambda: None)
 
-    monkeypatch.setattr(aprs_formatter.requests, 'post', fake_post)
+    # patch the Session.post used by the implementation
+    monkeypatch.setattr(aprs_formatter.requests.Session, 'post', lambda self, *a, **k: fake_post(*a, **k))
 
     service.push_packet('TESTPACKET')
 
