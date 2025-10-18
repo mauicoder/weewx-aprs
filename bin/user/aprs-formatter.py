@@ -1,5 +1,6 @@
-from datetime import datetime
+from datetime import datetime, timezone
 import os
+import requests
 
 import weeutil.weeutil
 import weewx.engine
@@ -28,7 +29,7 @@ class APRS(weewx.engine.StdService):
         # Accurite model 01036 seems to require these markers with no timestamp
         if "accurite" in self._stationModel:
             self._wind_direction_marker = ''
-            self._wind_direction_marker = '/'
+            self._wind_speed_marker = '/'
         else:
             self._wind_direction_marker = 'c'
             self._wind_speed_marker = 's'
@@ -59,7 +60,7 @@ class APRS(weewx.engine.StdService):
             data = [
                 self._message_type,
                 datetime.strftime(
-                    datetime.utcfromtimestamp(record['dateTime']),
+                    datetime.fromtimestamp(record['dateTime'], timezone.utc),
                     self._time_format),
             ]
             
@@ -175,7 +176,69 @@ class APRS(weewx.engine.StdService):
         wxdata = ''.join(data)
 
         # Atomic update of self._output_filename.
-        with open(self._output_filename_tmp, 'w') as f:
-            f.write(wxdata)
-            logging.info("weewx-aprs-packet-formatter - %s"% (wxdata))
-        os.rename(self._output_filename_tmp, self._output_filename)
+        try:
+            with open(self._output_filename_tmp, 'w', encoding='utf-8') as f:
+                f.write(wxdata)
+            logging.info("weewx-aprs-packet-formatter - %s", wxdata)
+            # Use os.replace for atomic replace (works across platforms)
+            os.replace(self._output_filename_tmp, self._output_filename)
+        except Exception:
+            logging.exception("weewx-aprs-packet-formatter - failed to write output file")
+        # push the packet (instance method)
+        self.push_packet(wxdata)
+
+    def push_packet(self, packet_content):
+        """
+        Pushes the generated APRS packet content to a remote HTTP/HTTPS endpoint.
+        """
+        # Get configuration settings from self.config (StdService provides this)
+        url = self.config.get('APRS', 'push_url')
+        enabled = weeutil.weeutil.to_bool(self.config.get('APRS', 'push_enabled', 'False'))
+        username = self.config.get('APRS', 'push_user')
+        password = self.config.get('APRS', 'push_password')
+        verify_ssl = weeutil.weeutil.to_bool(self.config.get('APRS', 'push_ssl_verify', 'True'))
+
+        if not enabled:
+            logging.debug("APRS push is disabled in configuration")
+            return
+
+        if not url:
+            logging.error("APRS push is enabled but 'push_url' is not set.")
+            return
+        
+        logging.info("Attempting to push APRS packet to %s", url)
+
+        # Prepare authentication payload
+        auth = (username, password) if username and password else None
+        
+        # Requests will automatically handle http vs https and the port
+        try:
+            response = requests.post(
+                url,
+                data=packet_content,
+                auth=auth,
+                verify=verify_ssl,
+                timeout=10,  # Set a timeout for the request
+            )
+            response.raise_for_status()  # Raise exception for bad status codes (4xx or 5xx)
+
+            logging.info("APRS packet successfully pushed. Status: %s", response.status_code)
+
+        except requests.exceptions.RequestException as e:
+            logging.error("Failed to push APRS packet to %s: %s", url, e)
+
+
+    def do_format(self, packet, time_ts):
+        """
+        Formats the packet and then calls the push function.
+        """
+        # ... (Your existing formatting logic to create the packet_content) ...
+        
+        # 1. Format the packet
+        packet_content = self.do_format_base(packet, time_ts)
+        
+        # 2. Write to the local file (existing logic)
+        self.write_file(packet_content)
+
+        # 3. PUSH the packet (NEW STEP)
+        self.push_packet(packet_content)
