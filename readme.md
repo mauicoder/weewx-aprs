@@ -85,3 +85,31 @@ http://www.weewx.com/
 https://www.weather.gov/cle/CWOP  
 http://www.aprs.org/doc/APRS101.PDF  
 ---
+
+## Push configuration (optional)
+
+The formatter can optionally push the generated APRS packet to a remote HTTP/HTTPS endpoint. Configure the following keys in the `APRS` section of your `weewx.conf` (or your service config):
+
+```
+# Enable HTTP push (0/1). Default: 0
+push_enabled = 0
+
+# Destination URL to POST the packet to. Example: https://example.com/push
+push_url = 
+
+# Optional HTTP basic auth
+push_user = 
+push_password = 
+
+# Whether to verify the server TLS certificate (0/1). Default: 1
+push_ssl_verify = 1
+
+# Retry behavior: number of attempts (integer). Default: 3
+push_retries = 3
+
+# Base backoff in seconds used for exponential backoff between retries.
+# The sleep before attempt N is `push_backoff * (2 ** (N-1))`. Default: 0
+push_backoff = 0
+```
+
+The service will attempt up to `push_retries` POST requests and perform exponential backoff between attempts when `push_backoff` is greater than zero. Authentication and SSL verification are passed to the `requests` library as configured.
