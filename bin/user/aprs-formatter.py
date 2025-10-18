@@ -9,6 +9,22 @@ import logging
 
 
 class APRS(weewx.engine.StdService):
+    """APRS packet formatter service for WeeWX.
+
+    Responsibilities:
+    - build APRS weather packets from archive records
+    - write the packet to a local file (atomic replace)
+    - optionally push the packet to a remote HTTP endpoint
+
+    Config keys (in the `APRS` section):
+    - output_filename (required)
+    - include_position (0/1)
+    - symbol_table, symbol_code, comment
+    - station_model
+    - report_luminosity (0/1)
+    - push_url, push_enabled, push_user, push_password, push_ssl_verify
+    """
+
     def __init__(self, engine, config_dict):
         super(APRS, self).__init__(engine, config_dict)
         conf = config_dict['APRS']
@@ -50,142 +66,183 @@ class APRS(weewx.engine.StdService):
         self.bind(weewx.NEW_ARCHIVE_RECORD, self._handle_new_archive_record)
 
     def _handle_new_archive_record(self, event):
-        """Generate a positionless APRS weather report and write it to a file"""
-        
+        """Generate a positionless APRS weather report and write it to a file.
+
+        This method delegates numeric formatting to helper methods to keep
+        behavior predictable and easy to test.
+        """
+
         record = event.record
-        # Accurite Model 01036 seems to require timestamp be removed
+
+        # Start packet header: message type + optional timestamp
         if "accurite" in self._stationModel:
-             data = [self._message_type,'']
+            parts = [self._message_type, '']
         else:
-            data = [
-                self._message_type,
-                datetime.strftime(
-                    datetime.fromtimestamp(record['dateTime'], timezone.utc),
-                    self._time_format),
-            ]
-            
+            ts = datetime.fromtimestamp(record['dateTime'], timezone.utc)
+            parts = [self._message_type, datetime.strftime(ts, self._time_format)]
+
+        # include position when configured
         if self._include_position:
-            data.append(self._latitude)
-            data.append(self._symbol_table)
-            data.append(self._longitude)
-            data.append(self._symbol_code)
+            parts.extend([self._latitude, self._symbol_table, self._longitude, self._symbol_code])
 
-        if record.get('windDir') is not None:
-            # Wind direction (in degrees)
-            # Wind from North needs to be reported as 360.
-            # Wind from 0 means N/A in the APRS standard.
-            # We need to make sure it does not get to 0, so do not rely on
-            # the format string rouding, but round to no decimals before
-            # comparing with 0
-            wind_dir = int(round(record['windDir'], 0))
-            if wind_dir <= 0:
-                wind_dir = 360
-            try: 
-                data.append('%s%03u' % (self._wind_direction_marker,
-                                    wind_dir))
-            except Exception as e:
-                logging.error("weewx-aprs-packet-formatter - %s %s %s" % (e, self._wind_direction_marker,
-                                    wind_dir))
-        else:
-            data.append('%s000' % self._wind_direction_marker)
+        # Wind direction
+        parts.append(self._format_wind_dir(record.get('windDir')))
 
-        if record.get('windSpeed') is not None:
-            try: 
-                data.append('%s%03.f' % (self._wind_speed_marker,
-            record['windSpeed']))
-            except Exception as e:
-                logging.error("weewx-aprs-packet-formatter - windSpeed -  %s %s %s" % (e, self._wind_speed_marker,
-            record['windSpeed']))
-        else:
-            data.append('%s...' % self._wind_speed_marker)
+        # Wind speed
+        parts.append(self._format_wind_speed(record.get('windSpeed')))
 
-        if record.get('windGust') is not None:
-            # Gust (peak wind speed in mph in the last 5 minutes)
-            try: 
-                data.append('g%03.f' % record['windGust'])
-            except Exception as e:
-                logging.error("weewx-aprs-packet-formatter - windGust - %s" % (e))
-                data.append('g...')
-        else:
-            data.append('g...')
+        # Wind gust
+        parts.append(self._format_wind_gust(record.get('windGust')))
 
-        if record.get('outTemp') is not None:
-            # Temperature (in degrees Fahrenheit)
-            try: 
-                data.append('t%03.f' % record['outTemp'])
-            except Exception as e:
-                data.append('t...')
-        else:
-            data.append('t...')
+        # Temperature
+        parts.append(self._format_temperature(record.get('outTemp')))
 
-        if record.get('rainRate') is not None:
-            # Rainfall (in hundredths of an inch) in the last hour
-            try: 
-                data.append('r%03.f' % (record['rainRate'] * 100))
-            except Exception as e:
-                logging.error("weewx-aprs-packet-formatter - rainRate - %s %s %s"% (e, record['rainRate'] * 100))
-                
-        if record.get('rain24h') is not None:
-            # Rainfall (in hundredths of an inch) in last 24 hours
-            try: 
-                data.append('p%03.f' % (record['rain24h'] * 100))
-            except Exception as e:
-                logging.error("weewx-aprs-packet-formatter - dayrain - %s %s %s" % (e, record['rain24h'] * 100))
+        # Rain rates
+        parts.append(self._format_rain_rate(record.get('rainRate')))
+        parts.append(self._format_rain_24h(record.get('rain24h')))
+        parts.append(self._format_day_rain(record.get('dayRain')))
 
-        if record.get('dayRain') is not None:
-            # Rainfall (in hundredths of an inch) since midnight
-            try: 
-                data.append('P%03.f' % (record['dayRain'] * 100))
-            except Exception as e:
-                logging.error("weewx-aprs-packet-formatter - dayrain - %s %s %s" % (e, record['dayRain'] * 100))
+        # Humidity
+        hum = self._format_humidity(record.get('outHumidity'))
+        if hum:
+            parts.append(hum)
 
-        if record.get('outHumidity') is not None:
-            # Humidity (in %. 00 = 100%)
-            # We need to make sure it does not get over 99, so do not rely on
-            # the format string rouding, but round to no decimals before
-            # comparing with 100
-            humidity = int(round(record['outHumidity'], 0))
-            if humidity >= 100:
-                humidity = 0
-            try:
-                data.append('h%02u' % humidity)
-            except Exception as e: 
-                logging.error("weewx-aprs-packet-formatter - humidity - %s %s" % (e, humidity))
-        if record.get('barometer') is not None:
-            # Barometric pressure (in tenths of millibars/tenths of hPascal)
-            barometer = weewx.units.convert(
-                (record['barometer'], 'inHg', 'pressure'),
-                'mbar')[0] * 10
-            try:
-                data.append('b%05.f' % barometer)
-            except:
-                logging.error("weewx-aprs-packet-formatter - barometer - %s" % (barometer))
-        
+        # Barometer
+        bar = self._format_barometer(record.get('barometer'))
+        if bar:
+            parts.append(bar)
+
+        # Luminosity
         if self._reportLuminosity == 1:
-            if record.get('luminosity') is not None:
-                #Luminosity in watts per meter ^2, 3 places
-                try:
-                    lumen = record['luminosity']
-                    data.append('L%03.u' % lumen)
-                except Exception as e:
-                    logging.error("weewx-aprs-packet-formatter - luminosity - %s" % (e))
+            lum = self._format_luminosity(record.get('luminosity'))
+            if lum:
+                parts.append(lum)
 
         if self._comment:
-            data.append(self._comment)
+            parts.append(self._comment)
 
-        wxdata = ''.join(data)
+        wxdata = ''.join(parts)
 
-        # Atomic update of self._output_filename.
+        # write atomically and push
+        self._write_output(wxdata)
+        self.push_packet(wxdata)
+
+    # --- helper formatting methods ---
+    def _format_wind_dir(self, wind_dir_raw):
+        if wind_dir_raw is None:
+            return f"{self._wind_direction_marker}000"
+        try:
+            wind_dir = int(round(wind_dir_raw))
+            if wind_dir <= 0:
+                wind_dir = 360
+            return f"{self._wind_direction_marker}{wind_dir:03d}"
+        except Exception:
+            logging.exception("format wind_dir failed")
+            return f"{self._wind_direction_marker}000"
+
+    def _format_wind_speed(self, wind_speed_raw):
+        if wind_speed_raw is None:
+            return f"{self._wind_speed_marker}..."
+        try:
+            speed = int(round(wind_speed_raw))
+            return f"{self._wind_speed_marker}{speed:03d}"
+        except Exception:
+            logging.exception("format wind_speed failed")
+            return f"{self._wind_speed_marker}..."
+
+    def _format_wind_gust(self, gust_raw):
+        if gust_raw is None:
+            return 'g...'
+        try:
+            gust = int(round(gust_raw))
+            return f"g{gust:03d}"
+        except Exception:
+            logging.exception("format gust failed")
+            return 'g...'
+
+    def _format_temperature(self, temp_raw):
+        if temp_raw is None:
+            return 't...'
+        try:
+            t = int(round(temp_raw))
+            return f"t{t:03d}"
+        except Exception:
+            logging.exception("format temperature failed")
+            return 't...'
+
+    def _format_rain_rate(self, rain_raw):
+        if rain_raw is None:
+            return 'r...'
+        try:
+            r = int(round(rain_raw * 100))
+            return f"r{r:03d}"
+        except Exception:
+            logging.exception("format rain_rate failed")
+            return 'r...'
+
+    def _format_rain_24h(self, rain24_raw):
+        if rain24_raw is None:
+            return 'p...'
+        try:
+            p = int(round(rain24_raw * 100))
+            return f"p{p:03d}"
+        except Exception:
+            logging.exception("format rain24h failed")
+            return 'p...'
+
+    def _format_day_rain(self, day_raw):
+        if day_raw is None:
+            return 'P...'
+        try:
+            P = int(round(day_raw * 100))
+            return f"P{P:03d}"
+        except Exception:
+            logging.exception("format dayRain failed")
+            return 'P...'
+
+    def _format_humidity(self, hum_raw):
+        if hum_raw is None:
+            return None
+        try:
+            humidity = int(round(hum_raw))
+            if humidity >= 100:
+                humidity = 0
+            return f"h{humidity:02d}"
+        except Exception:
+            logging.exception("format humidity failed")
+            return None
+
+    def _format_barometer(self, baro_raw):
+        if baro_raw is None:
+            return None
+        try:
+            # convert from inHg to mbar then to tenths
+            barometer = weewx.units.convert((baro_raw, 'inHg', 'pressure'), 'mbar')[0] * 10
+            b = int(round(barometer))
+            return f"b{b:05d}"
+        except Exception:
+            logging.exception("format barometer failed")
+            return None
+
+    def _format_luminosity(self, lumen_raw):
+        if lumen_raw is None:
+            return None
+        try:
+            lumen = int(round(lumen_raw))
+            return f"L{lumen:03d}"
+        except Exception:
+            logging.exception("format luminosity failed")
+            return None
+
+    def _write_output(self, wxdata: str) -> None:
+        """Atomically write the generated packet to the configured output file."""
         try:
             with open(self._output_filename_tmp, 'w', encoding='utf-8') as f:
                 f.write(wxdata)
             logging.info("weewx-aprs-packet-formatter - %s", wxdata)
-            # Use os.replace for atomic replace (works across platforms)
             os.replace(self._output_filename_tmp, self._output_filename)
         except Exception:
             logging.exception("weewx-aprs-packet-formatter - failed to write output file")
-        # push the packet (instance method)
-        self.push_packet(wxdata)
 
     def push_packet(self, packet_content):
         """

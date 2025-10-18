@@ -1,26 +1,22 @@
 import types
 import sys
+import types as _types
 import pytest
 
-# Minimal fake weeutil module
-weeutil = types.SimpleNamespace()
-
-def to_bool(val):
-    if isinstance(val, bool):
-        return val
-    if val is None:
-        return False
-    s = str(val).lower()
-    return s in ("1", "true", "yes", "on")
-
-weeutil.weeutil = types.SimpleNamespace(to_bool=to_bool, latlon_string=lambda v, dirs, kind: ("N",))
+# Minimal fake weeutil module (use ModuleType so mypy and import machinery are happy)
+weeutil = _types.ModuleType("weeutil")
+weeutil.weeutil = _types.SimpleNamespace(  # type: ignore[attr-defined]
+    to_bool=lambda val: (bool(val) if isinstance(val, bool) else str(val).lower() in ("1", "true", "yes", "on")),
+    latlon_string=lambda v, dirs, kind: ("N",),
+)
 
 # Minimal fake weewx package
-weewx = types.SimpleNamespace()
-weewx_engine = types.SimpleNamespace()
+# top-level weewx module and submodules (type: ignore on dynamic attrs)
+weewx = _types.ModuleType("weewx")
+weewx_engine = _types.ModuleType("weewx.engine")
 
 # Top-level event constant expected by APRS
-weewx.NEW_ARCHIVE_RECORD = 'NEW_ARCHIVE_RECORD'
+weewx.NEW_ARCHIVE_RECORD = 'NEW_ARCHIVE_RECORD'  # type: ignore[attr-defined]
 
 
 class FakeConfig:
@@ -61,8 +57,8 @@ class DummyStdService:
         """Minimal bind implementation used by APRS during tests."""
         self._bindings.setdefault(event, []).append(handler)
 
-weewx.engine = types.SimpleNamespace(StdService=DummyStdService, NEW_ARCHIVE_RECORD='NEW_ARCHIVE_RECORD')
-weewx.units = types.SimpleNamespace(convert=lambda x, y: (x[0],))
+weewx.engine = _types.SimpleNamespace(StdService=DummyStdService, NEW_ARCHIVE_RECORD='NEW_ARCHIVE_RECORD')  # type: ignore[attr-defined]
+weewx.units = _types.SimpleNamespace(convert=lambda x, y: (x[0],))  # type: ignore[attr-defined]
 
 # Insert these into sys.modules so the code under test can import them
 sys.modules['weeutil'] = weeutil
