@@ -7,7 +7,9 @@ import pytest
 # load module by path (same approach as other tests)
 _mod_path = pathlib.Path(__file__).resolve().parents[1] / 'bin' / 'user' / 'aprs-formatter.py'
 spec = importlib.util.spec_from_file_location('aprs_formatter', str(_mod_path))
+assert spec is not None, "failed to create spec for aprs_formatter"
 aprs_formatter = importlib.util.module_from_spec(spec)
+assert spec.loader is not None, "spec.loader is None"
 spec.loader.exec_module(aprs_formatter)
 
 

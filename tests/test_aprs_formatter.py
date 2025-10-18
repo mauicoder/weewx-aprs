@@ -1,10 +1,5 @@
 import os
 import types
-import logging
-import requests
-from unittest import mock
-
-import pytest
 
 # Import the aprs-formatter module directly by path (bin is not a package)
 import importlib.util
@@ -12,7 +7,9 @@ import pathlib
 
 _mod_path = pathlib.Path(__file__).resolve().parents[1] / 'bin' / 'user' / 'aprs-formatter.py'
 spec = importlib.util.spec_from_file_location('aprs_formatter', str(_mod_path))
+assert spec is not None, "failed to create spec for aprs_formatter"
 aprs_formatter = importlib.util.module_from_spec(spec)
+assert spec.loader is not None, "spec.loader is None"
 spec.loader.exec_module(aprs_formatter)
 
 

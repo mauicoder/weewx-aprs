@@ -3,3 +3,4 @@ ruff
 mypy
 typing-extensions
 requests
+types-requests
