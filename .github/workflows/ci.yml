@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [ '**' ]
+  pull_request:
+    branches: [ '**' ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.11, 3.12, 3.13]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      - name: Run ruff (lint)
+        run: |
+          python -m ruff check .
+
+      - name: Run mypy (type check)
+        run: |
+          python -m mypy --ignore-missing-imports bin tests
+
+      - name: Run tests
+        run: |
+          python -m pytest -q
+        env:
+          PYTHONWARNINGS: default
+
+      - name: Upload pytest cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .pytest_cache
+          key: ${{ runner.os }}-pytest-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pytest-

@@ -1,4 +1,5 @@
 # aprs - weewx extension for generating APRS-compliant packets
+![CI](https://github.com/mauicoder/weewx-aprs/actions/workflows/ci.yml/badge.svg)
 ![alt text](img/aprs.png)![alt text](img/handshake.png)  ![alt text](img/weewx.jpg)  
 This [weeWX](https://www.weewx.com/) extension allows the generation of APRS-compliant packets
 containing weather information collected by weewx.
