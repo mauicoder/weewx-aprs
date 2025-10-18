@@ -113,3 +113,21 @@ push_backoff = 0
 ```
 
 The service will attempt up to `push_retries` POST requests and perform exponential backoff between attempts when `push_backoff` is greater than zero. Authentication and SSL verification are passed to the `requests` library as configured.
+
+Example `APRS` configuration with push enabled:
+
+```
+[APRS]
+output_filename = /dev/shm/aprs.pkt
+station_model = mystation
+include_position = 0
+push_enabled = 1
+push_url = https://example.test/push
+push_user = myuser
+push_password = mypassword
+push_ssl_verify = 1
+push_retries = 3
+push_backoff = 1
+```
+
+Default behavior: when `push_enabled` is omitted or set to `0` the formatter will only write the APRS packet to the configured `output_filename` and will not attempt any network activity. When `push_enabled` is `1` the `push_url` must be set.
